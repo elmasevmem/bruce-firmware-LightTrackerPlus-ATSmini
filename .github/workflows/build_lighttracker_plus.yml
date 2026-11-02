@@ -1,0 +1,60 @@
+name: Build LightTracker Plus
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build lighttracker-plus
+    runs-on: ubuntu-latest
+    env:
+      PIO_ENV: lighttracker-plus
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            .pio/libdeps
+          key: ${{ runner.os }}-pio-${{ env.PIO_ENV }}-${{ hashFiles('platformio.ini', 'boards/lighttracker-plus/*.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-pio-${{ env.PIO_ENV }}-
+
+      - name: Install dependencies
+        run: |
+          pip install requests esptool intelhex
+          pip install platformio
+
+      - name: Set version
+        run: |
+          version="${GITHUB_SHA::7}"
+          sed -i "s/-DBRUCE_VERSION=/-DBRUCE_VERSION='\"$version\"' ; /g" ./platformio.ini
+
+      - name: Compile
+        run: |
+          set -o pipefail
+          platformio run -e "$PIO_ENV" | tee build.log
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bruce-lighttracker-plus
+          path: |
+            Bruce-*.*
+            .pio/build/lighttracker-plus/firmware.bin
+            .pio/build/lighttracker-plus/bootloader.bin
+            .pio/build/lighttracker-plus/partitions.bin
+          retention-days: 14
+          if-no-files-found: error
