@@ -12,6 +12,7 @@ var i2c = require("i2c");
 var display = require("display");
 var keyboard = require("keyboard");
 var gpio = require("gpio");
+var device = require("device");
 
 // --- ATS MINI PINLERI (boards/ats-mini/pins_arduino.h) ---
 var SDA_PIN = 18;
@@ -273,14 +274,43 @@ function shutdown() {
     cmd([CMD_POWER_DOWN]);
 }
 
-// --- ANA PROGRAM ---
-clearRds();
-if (!initRadio()) {
+function showError(lines) {
     display.fill(0x0000);
     display.setTextColor(0xF800);
     display.setTextSize(2);
-    display.drawString("Si4732 bulunamadi!", 6, 70);
-    delay(3000);
+    display.drawString(lines[0], 6, 50);
+    display.setTextSize(1);
+    display.setTextColor(0xFFFF);
+    for (var i = 1; i < lines.length; i++) display.drawString(lines[i], 6, 80 + (i - 1) * 14);
+    delay(4000);
+}
+
+// Bu betik sadece ATS Mini'de çalışır: başka cihazlarda bu pinler farklı donanıma bağlı.
+function isAtsMini() {
+    var b = "";
+    try { b = String(device.getBoard()); } catch (e) { b = ""; }
+    return b.toLowerCase().indexOf("ats mini") >= 0;
+}
+
+// i2c.read() bazı Bruce sürümlerinde henüz yok ("not implemented")
+function i2cReadSupported() {
+    try {
+        i2c.begin(SDA_PIN, SCL_PIN, 100000);
+        i2c.read(0x11, 1);
+        return true;
+    } catch (e) {
+        return String(e).indexOf("not implemented") < 0;
+    }
+}
+
+// --- ANA PROGRAM ---
+clearRds();
+if (!isAtsMini()) {
+    showError(["Sadece ATS Mini!", "This app only runs on the ATS Mini", "(ESP32-S3 + SI4732).", "Device: " + device.getBoard()]);
+} else if (!i2cReadSupported()) {
+    showError(["i2c.read yok", "This firmware lacks i2c.read().", "Use the built-in FM menu or a", "newer Bruce build."]);
+} else if (!initRadio()) {
+    showError(["Si4732 bulunamadi!", "Si4732 not found on I2C 18/17."]);
 } else {
     draw();
     var lastPoll = 0;
