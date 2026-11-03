@@ -4,7 +4,7 @@
 // -------------------------------------------------------------------------------------------------
 // QRP Labs LightTracker Plus v1.0 — Bruce board pinout
 // ESP32-S3 (8MB flash) + SX1268 (EBYTE E22-400M30S, 433 MHz) + Quectel L80 GPS
-// Pin map taken from the Meshtastic variant (variants/light_tracker_plus/variant.h)
+// Pin map: lightaprs/LightTracker-Plus-1.0 + richonguzman/LoRa_APRS_Tracker variant
 // -------------------------------------------------------------------------------------------------
 
 #include "soc/soc_caps.h"
@@ -76,14 +76,19 @@ static const uint8_t T14 = 14;
 #define LT_LORA_TXEN 14       // E22 RF switch, TX enable
 #define LT_LORA_POWER_CTRL 21 // E22 module power
 
-// GPS Quectel L80
-#define LT_GPS_RX 17 // ESP32 RX  <- GPS TX
-#define LT_GPS_TX 18 // ESP32 TX  -> GPS RX
-#define LT_GPS_VCC 33
+// GPS Quectel L80RE-M37
+#define LT_GPS_RX 18 // ESP32 RX  <- GPS TX
+#define LT_GPS_TX 17 // ESP32 TX  -> GPS RX
+#define LT_GPS_VCC 33 // PNP high-side switch: LOW = on
 #define LT_GPS_BAUD 9600
+
+// OLED SSD1306 128x64 (I2C, addr 0x3C)
+#define LT_OLED_SDA 3
+#define LT_OLED_SCL 4
 
 // Misc
 #define LT_BUTTON 0  // BOOT button
+#define LT_LED 16    // user LED
 #define LT_VBAT_ADC 1 // battery sense, divider 1:2
 
 #endif /* Pins_Arduino_h */
