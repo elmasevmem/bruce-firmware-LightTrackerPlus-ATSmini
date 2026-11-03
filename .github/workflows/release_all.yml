@@ -1,0 +1,139 @@
+name: Release (LightTracker Plus + ATS Mini)
+
+# Run manually from the Actions tab: enter a version (e.g. v0.3).
+# Both devices are built in parallel and published together in one GitHub release
+# tagged with that version.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. v0.3)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.device.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        device:
+          - { env: "lighttracker-plus", name: "LightTracker Plus" }
+          - { env: "ats-mini",          name: "ATS Mini" }
+    env:
+      PIO_ENV: ${{ matrix.device.env }}
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Check version format
+        run: |
+          if [[ ! "$VERSION" =~ ^v[0-9]+(\.[0-9]+)*([-.][A-Za-z0-9]+)*$ ]]; then
+            echo "::error::Version must look like v0.3 (got '$VERSION')"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            .pio/libdeps
+          key: ${{ runner.os }}-pio-${{ env.PIO_ENV }}-${{ hashFiles('platformio.ini', format('boards/{0}/*.ini', env.PIO_ENV)) }}
+          restore-keys: |
+            ${{ runner.os }}-pio-${{ env.PIO_ENV }}-
+
+      - name: Install dependencies
+        run: |
+          pip install requests esptool intelhex
+          pip install platformio
+
+      - name: Set version
+        run: sed -i "s/-DBRUCE_VERSION=/-DBRUCE_VERSION='\"$VERSION\"' ; /g" ./platformio.ini
+
+      - name: Compile
+        run: |
+          set -o pipefail
+          platformio run -e "$PIO_ENV" | tee build.log
+
+      - name: Collect binaries
+        run: |
+          mkdir -p out
+          cp "Bruce-${PIO_ENV}.bin" "out/Bruce-${PIO_ENV}-${VERSION}-full.bin"
+          cp ".pio/build/${PIO_ENV}/firmware.bin" "out/Bruce-${PIO_ENV}-${VERSION}-app.bin"
+          ls -la out
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.device.env }}
+          path: out/*
+          retention-days: 7
+          if-no-files-found: error
+
+  release:
+    name: Publish release ${{ inputs.version }}
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bin-*
+          path: release
+          merge-multiple: true
+
+      - name: List files
+        run: ls -la release
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: "Bruce ${{ inputs.version }} — LightTracker Plus & ATS Mini"
+          files: release/*
+          fail_on_unmatched_files: true
+          body: |
+            Bruce firmware builds for two devices.
+
+            ## Files
+            | Device | Full image (flash at `0x0`) | App only (OTA, `0x10000`) |
+            |---|---|---|
+            | QRP Labs LightTracker Plus v1.0 | `Bruce-lighttracker-plus-${{ inputs.version }}-full.bin` | `Bruce-lighttracker-plus-${{ inputs.version }}-app.bin` |
+            | ATS Mini (OPI PSRAM) | `Bruce-ats-mini-${{ inputs.version }}-full.bin` | `Bruce-ats-mini-${{ inputs.version }}-app.bin` |
+
+            ## Flash
+            ```
+            esptool.py --chip esp32s3 --port <PORT> --baud 460800 write_flash 0x0 <full image>
+            ```
+            Or use https://bruce.computer/flasher / ESP Web Tools with the full image at offset 0.
+
+            ## LightTracker Plus
+            - ESP32-S3 + SX1268 (E22-400M30S, 433 MHz) + L80 GPS
+            - Display: 0.96" SSD1306 128x64 I2C OLED on the OLED header (SDA=3, SCL=4, 0x3C)
+            - BOOT button: short press = next, medium (~0.5 s) = select, hold (1.2 s) = back
+            - LoRa works in LoRa Chat via the SX1262 driver (default radio). No CC1101 / Sub-GHz hardware.
+
+            ## ATS Mini
+            - ESP32-S3 + SI4732, 170x320 ST7789, rotary encoder
+            - Only for units with Octal (OPI) PSRAM; Quad PSRAM units need the `ats-mini-qspi` build.
+            - Encoder: rotate = prev/next, short push = select, long push = back
+            - The SI4732 radio is not used by Bruce; reflash the stock ATS Mini firmware to use the radio again.
