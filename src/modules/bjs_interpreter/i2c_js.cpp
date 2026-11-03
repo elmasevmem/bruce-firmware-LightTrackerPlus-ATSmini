@@ -87,10 +87,10 @@ JSValue native_i2c_read(JSContext *ctx, JSValue *this_val, int argc, JSValue *ar
     size_t got = jsI2CBus->requestFrom((uint8_t)addr, (uint8_t)len, (uint8_t)true);
     std::vector<uint8_t> buf(got);
     for (size_t i = 0; i < got && jsI2CBus->available(); i++) buf[i] = jsI2CBus->read();
-    // TODO: Create JS_NewArrayBufferCopy in MicroQuickJS
-    // JSValue arrbuf = JS_NewArrayBufferCopy(ctx, (const uint8_t *)buf.data(), got);
-    // return arrbuf;
-    return JS_ThrowInternalError(ctx, "i2c.read: not implemented");
+    // Return the bytes as a plain JS array of numbers
+    JSValue arr = JS_NewArray(ctx, (int)got);
+    for (size_t i = 0; i < got; i++) JS_SetPropertyUint32(ctx, arr, (uint32_t)i, JS_NewInt32(ctx, buf[i]));
+    return arr;
 }
 
 JSValue native_i2c_write_read(JSContext *ctx, JSValue *this_val, int argc, JSValue *argv) {
@@ -128,10 +128,10 @@ JSValue native_i2c_write_read(JSContext *ctx, JSValue *this_val, int argc, JSVal
     size_t got = jsI2CBus->requestFrom((uint8_t)addr, (uint8_t)rlen, (uint8_t)true);
     std::vector<uint8_t> buf(got);
     for (size_t i = 0; i < got && jsI2CBus->available(); i++) buf[i] = jsI2CBus->read();
-    // TODO: Create JS_NewArrayBufferCopy in MicroQuickJS
-    // JSValue arrbuf = JS_NewArrayBufferCopy(ctx, (const uint8_t *)buf.data(), got);
-    // return arrbuf;
-    return JS_ThrowInternalError(ctx, "i2c.writeRead: not implemented");
+    // Return the bytes as a plain JS array of numbers
+    JSValue arr = JS_NewArray(ctx, (int)got);
+    for (size_t i = 0; i < got; i++) JS_SetPropertyUint32(ctx, arr, (uint32_t)i, JS_NewInt32(ctx, buf[i]));
+    return arr;
 }
 
 #endif

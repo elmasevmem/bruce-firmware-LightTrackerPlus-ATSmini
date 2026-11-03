@@ -12,7 +12,7 @@ MainMenu::MainMenu() {
 #if !defined(LITE_VERSION)
         &loraMenu,
 #endif
-#if defined(FM_SI4713) && !defined(LITE_VERSION)
+#if (defined(FM_SI4713) || defined(ATS_MINI)) && !defined(LITE_VERSION)
         &fmMenu,
 #endif
         &irMenu,

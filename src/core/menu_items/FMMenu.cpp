@@ -2,9 +2,15 @@
 #include "core/display.h"
 #include "core/utils.h"
 #include "modules/fm/fm.h"
+#if defined(ATS_MINI) && !defined(LITE_VERSION)
+#include "modules/fm/si4732_fm.h"
+#endif
 
 void FMMenu::optionsMenu() {
     options = {
+#if defined(ATS_MINI) && !defined(LITE_VERSION)
+        {"FM Radio (RDS)", si4732_fm_setup},
+#endif
 #if !defined(LITE_VERSION) and defined(FM_SI4713)
         // #if defined(FM_SI4713)
         {"Brdcast std", lambdaHelper(fm_live_run, false)},
