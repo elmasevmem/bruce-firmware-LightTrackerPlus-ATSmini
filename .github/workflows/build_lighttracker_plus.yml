@@ -6,6 +6,12 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release version tag to create (e.g. v0.1). Leave empty for a plain build."
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write
@@ -16,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PIO_ENV: lighttracker-plus
+      REL_TAG: ${{ github.event_name == 'release' && github.ref_name || inputs.release_tag }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -44,7 +51,7 @@ jobs:
 
       - name: Set version
         run: |
-          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then version="$GITHUB_REF_NAME"; else version="${GITHUB_SHA::7}"; fi
+          if [[ -n "$REL_TAG" ]]; then version="$REL_TAG"; else version="${GITHUB_SHA::7}"; fi
           sed -i "s/-DBRUCE_VERSION=/-DBRUCE_VERSION='\"$version\"' ; /g" ./platformio.ini
 
       - name: Compile
@@ -65,17 +72,19 @@ jobs:
           if-no-files-found: error
 
       - name: Prepare release files
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.REL_TAG != ''
         run: |
           mkdir -p release
-          cp Bruce-lighttracker-plus.bin "release/Bruce-lighttracker-plus-${GITHUB_REF_NAME}-full.bin"
-          cp .pio/build/lighttracker-plus/firmware.bin "release/Bruce-lighttracker-plus-${GITHUB_REF_NAME}-app.bin"
+          cp Bruce-lighttracker-plus.bin "release/Bruce-lighttracker-plus-${REL_TAG}-full.bin"
+          cp .pio/build/lighttracker-plus/firmware.bin "release/Bruce-lighttracker-plus-${REL_TAG}-app.bin"
 
       - name: Publish GitHub release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.REL_TAG != ''
         uses: softprops/action-gh-release@v2
         with:
-          name: "LightTracker Plus ${{ github.ref_name }}"
+          tag_name: ${{ env.REL_TAG }}
+          target_commitish: ${{ github.sha }}
+          name: "LightTracker Plus ${{ env.REL_TAG }}"
           files: release/*
           body: |
             Bruce firmware for QRP Labs LightTracker Plus v1.0 (ESP32-S3 + SX1268 E22-400M30S + L80 GPS).
@@ -86,7 +95,7 @@ jobs:
 
             **Flash**
             ```
-            esptool.py --chip esp32s3 --port <PORT> --baud 460800 write_flash 0x0 Bruce-lighttracker-plus-${{ github.ref_name }}-full.bin
+            esptool.py --chip esp32s3 --port <PORT> --baud 460800 write_flash 0x0 Bruce-lighttracker-plus-${{ env.REL_TAG }}-full.bin
             ```
             Or use https://bruce.computer/flasher / ESP Web Tools with the full image at offset 0.
 
