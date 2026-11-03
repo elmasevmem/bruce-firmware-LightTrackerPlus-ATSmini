@@ -3,7 +3,11 @@ name: Build LightTracker Plus
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -39,7 +43,7 @@ jobs:
 
       - name: Set version
         run: |
-          version="${GITHUB_SHA::7}"
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then version="$GITHUB_REF_NAME"; else version="${GITHUB_SHA::7}"; fi
           sed -i "s/-DBRUCE_VERSION=/-DBRUCE_VERSION='\"$version\"' ; /g" ./platformio.ini
 
       - name: Compile
@@ -58,3 +62,34 @@ jobs:
             .pio/build/lighttracker-plus/partitions.bin
           retention-days: 14
           if-no-files-found: error
+
+      - name: Prepare release files
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          mkdir -p release
+          cp Bruce-lighttracker-plus.bin "release/Bruce-lighttracker-plus-${GITHUB_REF_NAME}-full.bin"
+          cp .pio/build/lighttracker-plus/firmware.bin "release/Bruce-lighttracker-plus-${GITHUB_REF_NAME}-app.bin"
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "LightTracker Plus ${{ github.ref_name }}"
+          files: release/*
+          body: |
+            Bruce firmware for QRP Labs LightTracker Plus v1.0 (ESP32-S3 + SX1268 E22-400M30S + L80 GPS).
+
+            **Files**
+            - `*-full.bin` — merged image (bootloader + partitions + app). Flash at **0x0**.
+            - `*-app.bin` — application only, for OTA / Bruce updater (flash at 0x10000).
+
+            **Flash**
+            ```
+            esptool.py --chip esp32s3 --port <PORT> --baud 460800 write_flash 0x0 Bruce-lighttracker-plus-${{ github.ref_name }}-full.bin
+            ```
+            Or use https://bruce.computer/flasher / ESP Web Tools with the full image at offset 0.
+
+            **Notes**
+            - No display: device runs headless. Connect to the Bruce WiFi AP and use the WebUI, or the USB serial CLI (115200).
+            - LoRa (SX1268) works in the LoRa Chat module via the SX1262 driver; default radio is set to SX1262.
+            - Sub-GHz (CC1101) features are not available on this hardware.
