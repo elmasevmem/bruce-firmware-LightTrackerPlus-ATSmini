@@ -51,6 +51,6 @@
       "wait_for_upload_port": true,
       "speed": 460800
     },
-    "url": "https://github.com/elmasevmem/bruce-firmware-LightTracker-Plus",
+    "url": "https://github.com/elmasevmem/bruce-firmware-LightTrackerPlus-ATSmini",
     "vendor": "QRP Labs"
   }
