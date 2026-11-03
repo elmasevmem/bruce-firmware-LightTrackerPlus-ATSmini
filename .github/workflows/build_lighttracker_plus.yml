@@ -3,7 +3,8 @@ name: Build LightTracker Plus
 on:
   push:
     branches: [main]
-    tags: ["v*"]
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
