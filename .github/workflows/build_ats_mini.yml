@@ -1,0 +1,117 @@
+name: Build ATS Mini
+
+# Builds the ATS Mini (ESP32-S3 + SI4732) firmware for units with Octal (OPI) PSRAM.
+# Units with Quad (QSPI) PSRAM need the `ats-mini-qspi` env, which this workflow does not build.
+#
+# Run it manually from the Actions tab and type a version (e.g. v0.1) in "release_tag" to publish
+# a GitHub release. Leave it empty for a plain build that only uploads an artifact.
+# The release tag is created as "ats-mini-<release_tag>" so it never collides with the
+# LightTracker Plus release tags.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Version to release (e.g. v0.1). Leave empty for a plain build."
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ats-mini (OPI PSRAM)
+    runs-on: ubuntu-latest
+    env:
+      PIO_ENV: ats-mini
+      REL_TAG: ${{ inputs.release_tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            .pio/libdeps
+          key: ${{ runner.os }}-pio-${{ env.PIO_ENV }}-${{ hashFiles('platformio.ini', 'boards/ats-mini/*.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-pio-${{ env.PIO_ENV }}-
+
+      - name: Install dependencies
+        run: |
+          pip install requests esptool intelhex
+          pip install platformio
+
+      - name: Set version
+        run: |
+          if [[ -n "$REL_TAG" ]]; then version="$REL_TAG"; else version="${GITHUB_SHA::7}"; fi
+          sed -i "s/-DBRUCE_VERSION=/-DBRUCE_VERSION='\"$version\"' ; /g" ./platformio.ini
+
+      - name: Compile
+        run: |
+          set -o pipefail
+          platformio run -e "$PIO_ENV" | tee build.log
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bruce-ats-mini
+          path: |
+            Bruce-*.*
+            .pio/build/ats-mini/firmware.bin
+            .pio/build/ats-mini/bootloader.bin
+            .pio/build/ats-mini/partitions.bin
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Prepare release files
+        if: env.REL_TAG != ''
+        run: |
+          mkdir -p release
+          cp Bruce-ats-mini.bin "release/Bruce-ats-mini-${REL_TAG}-full.bin"
+          cp .pio/build/ats-mini/firmware.bin "release/Bruce-ats-mini-${REL_TAG}-app.bin"
+
+      - name: Publish GitHub release
+        if: env.REL_TAG != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ats-mini-${{ env.REL_TAG }}
+          target_commitish: ${{ github.sha }}
+          name: "ATS Mini ${{ env.REL_TAG }}"
+          files: release/*
+          body: |
+            Bruce firmware for the ATS Mini (ESP32-S3 + SI4732 receiver, 170x320 ST7789 display, rotary encoder).
+
+            **Only for units with Octal (OPI) PSRAM** (e.g. ESP32-S3-WROOM-1 N8R8). Units with Quad PSRAM need the `ats-mini-qspi` build.
+
+            **Files**
+            - `*-full.bin`: merged image (bootloader + partitions + app). Flash at **0x0**.
+            - `*-app.bin`: application only, for OTA / Bruce updater (flash at 0x10000).
+
+            **Flash**
+            ```
+            esptool.py --chip esp32s3 --port <PORT> --baud 460800 write_flash 0x0 Bruce-ats-mini-${{ env.REL_TAG }}-full.bin
+            ```
+            Or use https://bruce.computer/flasher / ESP Web Tools with the full image at offset 0.
+
+            **Controls**
+            - Rotate the encoder: previous / next
+            - Short push: select
+            - Long push (600 ms) or the BOOT button, if soldered: back
+
+            **Notes**
+            - The SI4732 receiver is not used by Bruce. This build replaces the stock ATS Mini firmware: reflash the ATS Mini firmware to use the radio again.
+            - No SD card, CC1101, NRF24 or NFC hardware on this board.
