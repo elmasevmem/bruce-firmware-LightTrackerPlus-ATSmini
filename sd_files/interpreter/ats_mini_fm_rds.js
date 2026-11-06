@@ -1,11 +1,11 @@
 /**
- * Bruce Firmware - ATS Mini (ESP32-S3 + dahili Si4732) FM Radyo & RDS Alıcı (BruceJS)
- * Hedef Repo: https://github.com/elmasevmem/bruce-firmware-LightTrackerPlus-ATSmini
+ * ATS Mini (ESP32-S3 + built-in SI4732) FM radio with RDS for Bruce (BruceJS)
+ * Source: https://github.com/elmasevmem/bruce-firmware-LightTrackerPlus-ATSmini
  *
- * GEREKSİNİM: src/modules/bjs_interpreter/i2c_js.cpp yamalı olmalı
- * (orijinal repoda i2c.read() "not implemented" hatası fırlatıyor).
+ * REQUIRES a Bruce build where i2c.read() is implemented
+ * (some builds still throw "not implemented"; the script detects that and exits).
  *
- * Kontroller: Çevir = ayar | Kısa bas = mod | Uzun bas (600 ms) = çıkış
+ * Controls: rotate = adjust | short push = mode | long push (600 ms) = exit
  */
 
 var i2c = require("i2c");
@@ -14,17 +14,17 @@ var keyboard = require("keyboard");
 var gpio = require("gpio");
 var device = require("device");
 
-// --- ATS MINI PINLERI (boards/ats-mini/pins_arduino.h) ---
+// --- ATS MINI PINS ---
 var SDA_PIN = 18;
 var SCL_PIN = 17;
 var RST_PIN = 16;        // SI4732_RESET
-var PIN_POWER_ON = 15;   // Radyo LDO (HIGH = açık)
-var PIN_AMP_EN = 10;     // Amfi (HIGH = açık, pulse VERMEYİN)
-var AUDIO_MUTE_PIN = 3;  // HIGH = sessiz
+var PIN_POWER_ON = 15;   // receiver LDO (HIGH = on)
+var PIN_AMP_EN = 10;     // amplifier (HIGH = on, never pulse it)
+var AUDIO_MUTE_PIN = 3;  // HIGH = muted
 
 var ADDR = 0x11;         // SEN = GND
 
-// --- Si4732 komutları (AN332) ---
+// --- SI4732 commands (AN332) ---
 var CMD_POWER_UP = 0x01;
 var CMD_POWER_DOWN = 0x11;
 var CMD_SET_PROPERTY = 0x12;
@@ -38,13 +38,13 @@ var CMD_FM_RDS_STATUS = 0x24;
 var BAND_MIN = 8750;
 var BAND_MAX = 10800;
 
-// --- Durum ---
+// --- State ---
 var freq = 10000;
 var volume = 45;
 var rssi = 0;
 var snr = 0;
 var stereo = false;
-var uiMode = 0; // 0 frekans, 1 seek, 2 ses
+var uiMode = 0; // 0 frequency, 1 seek, 2 volume
 
 var psBuf = [];
 var rtBuf = [];
@@ -69,7 +69,7 @@ function readStatus() {
     return (r && r.length > 0) ? r[0] : 0;
 }
 
-// CTS (bit 7) bekle
+// wait for CTS (bit 7)
 function waitCts() {
     for (var i = 0; i < 100; i++) {
         if (readStatus() & 0x80) return true;
@@ -92,7 +92,7 @@ function setProperty(id, val) {
     cmd([CMD_SET_PROPERTY, 0x00, (id >> 8) & 0xFF, id & 0xFF, (val >> 8) & 0xFF, val & 0xFF]);
 }
 
-// Tune/Seek bitene kadar STC (bit 0) bekle
+// wait for STC (bit 0) until tune/seek completes
 function waitStc(timeoutMs) {
     var start = Date.now();
     while (Date.now() - start < timeoutMs) {
@@ -104,7 +104,7 @@ function waitStc(timeoutMs) {
 }
 
 function readTunedFreq() {
-    // INTACK=1 -> STC bayrağını temizler
+    // INTACK=1 clears the STC flag
     var r = cmdRead([CMD_FM_TUNE_STATUS, 0x01], 8);
     if (r && r.length >= 4) {
         var f = (r[2] << 8) | r[3];
@@ -204,7 +204,7 @@ function draw() {
 
     display.setTextSize(1);
     display.setTextColor(0x07E0);
-    var modes = ["[FREKANS]", "[SEEK ARA]", "[SES]"];
+    var modes = ["[FREQ]", "[SEEK]", "[VOLUME]"];
     display.drawString("ATS-MINI FM RDS  " + modes[uiMode], 6, 6);
 
     display.setTextSize(4);
@@ -226,14 +226,14 @@ function draw() {
     if (radioText.length > 48) display.drawString(radioText.substring(48, 64), 30, 128);
 
     display.setTextColor(0x7BEF);
-    display.drawString("Cevir: Ayar | Kisa Bas: Mod | Uzun Bas: Cikis", 6, 152);
+    display.drawString("Rotate: adjust | Push: mode | Hold: exit", 6, 152);
 }
 
 function initRadio() {
     gpio.pinMode(PIN_POWER_ON, "output");
     gpio.digitalWrite(PIN_POWER_ON, true);
     gpio.pinMode(AUDIO_MUTE_PIN, "output");
-    gpio.digitalWrite(AUDIO_MUTE_PIN, true); // açılış patlamasına karşı sustur
+    gpio.digitalWrite(AUDIO_MUTE_PIN, true); // mute to avoid the power-up pop
 
     gpio.pinMode(RST_PIN, "output");
     gpio.digitalWrite(RST_PIN, false);
@@ -249,16 +249,16 @@ function initRadio() {
     }
     if (!ok) return false;
 
-    // POWER_UP: XOSCEN + FM alıcı, analog ses çıkışı
+    // POWER_UP: XOSCEN + FM receiver, analog audio out
     cmd([CMD_POWER_UP, 0x10, 0x05]);
-    delay(500); // kristalin oturması
+    delay(500); // let the crystal settle
 
     setProperty(0x1100, 0x0001); // De-emphasis 50 us
-    setProperty(0x1400, BAND_MIN); // Seek alt sınır
-    setProperty(0x1401, BAND_MAX); // Seek üst sınır
-    setProperty(0x1402, 10);       // Seek adımı 100 kHz
-    setProperty(0x4000, volume);   // Ses
-    setProperty(0x1502, 0xAA01);   // RDS aç, blok hata eşikleri = 2
+    setProperty(0x1400, BAND_MIN); // seek lower limit
+    setProperty(0x1401, BAND_MAX); // seek upper limit
+    setProperty(0x1402, 10);       // seek step 100 kHz
+    setProperty(0x4000, volume);   // volume
+    setProperty(0x1502, 0xAA01);   // RDS on, block error thresholds = 2
 
     tune(freq);
 
@@ -285,14 +285,14 @@ function showError(lines) {
     delay(4000);
 }
 
-// Bu betik sadece ATS Mini'de çalışır: başka cihazlarda bu pinler farklı donanıma bağlı.
+// ATS Mini only: on other devices these pins are wired to different hardware.
 function isAtsMini() {
     var b = "";
     try { b = String(device.getBoard()); } catch (e) { b = ""; }
     return b.toLowerCase().indexOf("ats mini") >= 0;
 }
 
-// i2c.read() bazı Bruce sürümlerinde henüz yok ("not implemented")
+// i2c.read() is still missing in some Bruce builds ("not implemented")
 function i2cReadSupported() {
     try {
         i2c.begin(SDA_PIN, SCL_PIN, 100000);
@@ -303,14 +303,14 @@ function i2cReadSupported() {
     }
 }
 
-// --- ANA PROGRAM ---
+// --- MAIN ---
 clearRds();
 if (!isAtsMini()) {
-    showError(["Sadece ATS Mini!", "This app only runs on the ATS Mini", "(ESP32-S3 + SI4732).", "Device: " + device.getBoard()]);
+    showError(["ATS Mini only!", "This app only runs on the ATS Mini", "(ESP32-S3 + SI4732).", "Device: " + device.getBoard()]);
 } else if (!i2cReadSupported()) {
-    showError(["i2c.read yok", "This firmware lacks i2c.read().", "Use the built-in FM menu or a", "newer Bruce build."]);
+    showError(["No i2c.read()", "This firmware lacks i2c.read().", "Use the built-in FM menu or a", "newer Bruce build."]);
 } else if (!initRadio()) {
-    showError(["Si4732 bulunamadi!", "Si4732 not found on I2C 18/17."]);
+    showError(["SI4732 not found", "Si4732 not found on I2C 18/17."]);
 } else {
     draw();
     var lastPoll = 0;
@@ -331,7 +331,7 @@ if (!isAtsMini()) {
                 tune(freq + (next ? 10 : -10));
             } else if (uiMode === 1) {
                 display.setTextColor(0xFD20);
-                display.drawString("Araniyor...", 220, 6);
+                display.drawString("Seeking...", 220, 6);
                 seek(next);
             } else {
                 volume += next ? 2 : -2;
