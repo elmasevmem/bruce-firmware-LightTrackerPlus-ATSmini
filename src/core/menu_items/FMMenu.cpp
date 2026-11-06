@@ -11,8 +11,7 @@ void FMMenu::optionsMenu() {
 #if defined(ATS_MINI) && !defined(LITE_VERSION)
         {"FM Radio (RDS)", si4732_fm_setup},
 #endif
-#if !defined(LITE_VERSION) and defined(FM_SI4713)
-        // #if defined(FM_SI4713)
+#if !defined(LITE_VERSION)
         {"Brdcast std", lambdaHelper(fm_live_run, false)},
         {"Brdcast rsvd", lambdaHelper(fm_live_run, true)},
         {"Brdcast stop", fm_stop},

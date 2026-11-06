@@ -34,7 +34,7 @@ const int maxMessages = 19;
 int contentWidth = tftWidth - 20;
 int yStart = 35;
 int yPos = yStart;
-int ySpacing = 10;
+int ySpacing = LH * FP + 2;
 int rightColumnX = tftWidth / 2 + 10;
 SPIClass *loraSpi = nullptr;
 Module *loraModule = nullptr;
@@ -43,14 +43,17 @@ SX1262 *lora1262 = nullptr;
 volatile bool loraPacketReceived = false;
 volatile bool loraInterruptEnabled = true;
 enum class LoRaRadioVariant { SX1276, SX1262 };
-#ifdef LORA_DEFAULT_SX126X
-// Boards with an SX126x (SX1262/SX1268) radio default to the SX126x driver
-#define LORA_DEFAULT_RADIO_NAME "SX1262"
-LoRaRadioVariant loraRadioVariant = LoRaRadioVariant::SX1262;
-#else
-#define LORA_DEFAULT_RADIO_NAME "SX1276"
 LoRaRadioVariant loraRadioVariant = LoRaRadioVariant::SX1276;
+
+#ifndef DEFAULT_LORA_RADIO
+#define DEFAULT_LORA_RADIO "SX1276"
 #endif
+
+#ifndef DEFAULT_LORA_FREQUENCY
+#define DEFAULT_LORA_FREQUENCY "434500000.00"
+#endif
+
+bool __attribute__((weak)) prepareBoardLoRaRadio() { return true; }
 
 int getLoraIrqPin() {
 #ifdef LORA_IRQ
@@ -92,8 +95,9 @@ void onLoraPacket() {
 }
 
 SPIClass *selectLoraSPIBus() {
-    SPIClass *bus =
-        acquireSPIBus(bruceConfigPins.LoRa_bus.sck, bruceConfigPins.LoRa_bus.miso, bruceConfigPins.LoRa_bus.mosi);
+    SPIClass *bus = acquireSPIBus(
+        bruceConfigPins.LoRa_bus.sck, bruceConfigPins.LoRa_bus.miso, bruceConfigPins.LoRa_bus.mosi
+    );
     if (!bus) {
         Serial.println("No hardware SPI bus available for LoRa, falling back to default SPI");
         return &SPI;
@@ -118,6 +122,12 @@ bool startLoraRadio(float bandMHz) {
         return false;
     }
 
+    if (!prepareBoardLoRaRadio()) {
+        Serial.println("Preparing LoRa frontend failed!");
+        displayError("LoRa Init Failed", true);
+        return false;
+    }
+
     loraSpi = selectLoraSPIBus();
     clearLoraRadio();
     const int busyPin = (loraRadioVariant == LoRaRadioVariant::SX1262) ? getLoraBusyPin() : GPIO_NUM_NC;
@@ -139,7 +149,7 @@ bool startLoraRadio(float bandMHz) {
     } else {
         lora1262 = new SX1262(loraModule);
 #ifdef LORA_TCXO_VOLTAGE
-        // Modules with TCXO on DIO3 (e.g. EBYTE E22 series)
+        // Modules with a TCXO on DIO3 (e.g. EBYTE E22 series)
         state = lora1262->begin(
             bandMHz, 125.0, 9, 7, RADIOLIB_SX126X_SYNC_WORD_PRIVATE, 10, 8, LORA_TCXO_VOLTAGE
         );
@@ -224,7 +234,7 @@ void reciveMessage() {
 
 void render() {
     if (!update) return;
-    tft.setTextSize(1);
+    tft.setTextSize(FP);
     tft.fillScreen(TFT_BLACK);
     tft.setTextColor(0x6DFC);
     if (!intlora) { tft.drawString("Lora Init Failed", 10, 13); }
@@ -265,8 +275,8 @@ void sendmsg() {
         tft.setTextColor(bruceConfig.priColor);
 
         tft.setTextColor(TFT_RED);
-        tft.setTextSize(2);
-        tft.setCursor(10, tftHeight / 2 - 10);
+        tft.setTextSize(FM);
+        tft.setCursor(BORDER_PAD_X, tftHeight / 2 - BORDER_PAD_X);
         tft.print("LoRa not init!");
 
         tft.drawCentreString("LoRa not initialized!", tftWidth / 2, tftHeight / 2, 2);
@@ -311,7 +321,7 @@ void downpress() {
 }
 
 void selectRadioVariant(JsonDocument &doc) {
-    String stored = doc["LoRa_Radio"] | LORA_DEFAULT_RADIO_NAME;
+    String stored = doc["LoRa_Radio"] | DEFAULT_LORA_RADIO;
     if (stored.equalsIgnoreCase("SX1262")) { loraRadioVariant = LoRaRadioVariant::SX1262; }
     std::vector<Option> radioOptions = {
         {"SX1276", []() {}},
@@ -405,9 +415,9 @@ void lorachat() {
         Serial.println("creating lora settings .json file");
         JsonDocument doc;
         File file = LittleFS.open("/lora_settings.json", "w");
-        doc["LoRa_Frequency"] = "434500000.00";
+        doc["LoRa_Frequency"] = DEFAULT_LORA_FREQUENCY;
         doc["LoRa_Name"] = "BruceTest";
-        doc["LoRa_Radio"] = LORA_DEFAULT_RADIO_NAME;
+        doc["LoRa_Radio"] = DEFAULT_LORA_RADIO;
         serializeJson(doc, file);
         file.close();
     }
@@ -449,7 +459,7 @@ void lorachat() {
 // check the saving and loading
 void changeusername() {
     tft.fillScreen(TFT_BLACK);
-    String username = keyboard(username, 64, "");
+    String username = keyboard("", 64, "Username:");
     if (username == "" || username == "\x1B") return;
     File file = LittleFS.open("/lora_settings.json", "r");
     JsonDocument doc;

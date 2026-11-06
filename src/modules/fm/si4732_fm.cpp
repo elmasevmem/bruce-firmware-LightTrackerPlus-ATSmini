@@ -25,6 +25,12 @@
 #ifndef AUDIO_MUTE
 #define AUDIO_MUTE 3
 #endif
+#ifndef SI4732_SDA
+#define SI4732_SDA 18
+#endif
+#ifndef SI4732_SCL
+#define SI4732_SCL 17
+#endif
 #ifndef SI4732_RESET
 #define SI4732_RESET 16
 #endif
@@ -32,6 +38,7 @@
 #define FM_BAND_MIN 8750  // 87.50 MHz
 #define FM_BAND_MAX 10800 // 108.00 MHz
 #define FM_STEP 10        // 100 kHz
+#define VOL_STEP 4        // 0..63, ~16 encoder clicks from silent to full
 
 static SI4735 rx;
 static uint16_t currentFrequency = 10000; // 100.0 MHz
@@ -51,11 +58,12 @@ static void drawRadioUI(bool full) {
     if (full) tft.fillScreen(TFT_BLACK);
 
     // Başlık
-    tft.setTextSize(1);
+    // Active mode in large text, so it is obvious what the encoder is changing
+    tft.setTextSize(2);
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    const char *modes[] = {"[FREKANS]  ", "[SEEK ARA] ", "[SES]      "};
-    tft.setCursor(6, 6);
-    tft.printf("ATS-MINI FM RDS  %s", modes[uiMode]);
+    const char *modes[] = {"FREKANS ", "ARAMA   ", "SES     "};
+    tft.setCursor(6, 4);
+    tft.printf("FM RDS  [%s]", modes[uiMode]);
 
     // Frekans
     tft.setTextSize(4);
@@ -90,6 +98,14 @@ static void drawRadioUI(bool full) {
     if (radioText.length() > 48) {
         tft.setCursor(30, 128);
         tft.print(radioText.substring(48, 96));
+    }
+
+    // Volume bar (highlighted while the encoder adjusts the volume)
+    {
+        const int bx = 6, by = 146, bw = tftWidth - 12, bh = 4;
+        int filled = (bw * currentVolume) / 63;
+        tft.fillRect(bx, by, bw, bh, TFT_DARKGREY);
+        if (filled > 0) tft.fillRect(bx, by, filled, bh, uiMode == 2 ? TFT_GREEN : TFT_DARKGREEN);
     }
 
     if (full) {
@@ -160,7 +176,7 @@ void si4732_fm_setup() {
     delay(50);
 
     // 2) Dahili Si4732 I2C hattı (SDA=18, SCL=17)
-    Wire.begin(SDA, SCL);
+    Wire.begin(SI4732_SDA, SI4732_SCL);
 
     int16_t addr = rx.getDeviceI2CAddress(SI4732_RESET);
     if (addr == 0) {
@@ -223,9 +239,13 @@ void si4732_fm_loop() {
                 resetRdsView();
                 full = true;
             } else {
-                if (next) rx.volumeUp();
-                else rx.volumeDown();
-                currentVolume = rx.getVolume();
+                int v = (int)currentVolume + (next ? VOL_STEP : -VOL_STEP);
+                if (v < 0) v = 0;
+                if (v > 63) v = 63;
+                currentVolume = (uint8_t)v;
+                rx.setVolume(currentVolume);
+                // Hardware mute at 0 so the amplifier hiss goes away too
+                digitalWrite(AUDIO_MUTE, currentVolume == 0 ? HIGH : LOW);
             }
             redraw = true;
         }

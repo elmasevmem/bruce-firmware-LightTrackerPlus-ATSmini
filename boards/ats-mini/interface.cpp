@@ -1,31 +1,42 @@
-#include "core/bus_HAL.h"
+// ATS Mini (ESP32-S3 + SI4732) board glue for Bruce
+//
+// Input:
+//   encoder rotate      -> Prev / Next   (shared HAL, full-step decoding: 1 detent = 1 step)
+//   encoder short push  -> Select        (fires on release)
+//   encoder long push   -> Back / Esc    (600 ms)
+//   BOOT button (GPIO0) -> Back / Esc    (only on units where it is fitted)
+// Pushing and turning at the same time never counts as a Select.
+
 #include "core/powerSave.h"
+#include "hal/bright/bright.h"
+#include "hal/device.h"
+#include "hal/inputs/encoder.h"
 #include <driver/rtc_io.h>
 #include <globals.h>
 #include <interface.h>
 
-// ATS Mini (ESP32-S3 + SI4732) board glue for Bruce
-// Display: ST7789 170x320 8-bit parallel (TFT_eSPI, configured in pins_arduino.h)
-// Input:   rotary encoder
-//            rotate            -> Prev / Next
-//            short push        -> Select (fires on release)
-//            long push (600ms) -> Back / Esc
-//            BOOT button       -> Back / Esc (only on units where it is soldered)
-//          Rotating while the button is held is ignored as a Select, so push-and-turn never selects by accident.
+#define ENC_A 2
+#define ENC_B 1
+#define ENC_KEY 21
+#define BOOT_BTN 0
 
-#include <rotary_decoder.h>
-RotaryDecoder *encoder = nullptr;
-void pollEncoder(void) {
-    if (encoder) encoder->poll();
+#define LONG_PRESS_MS 600
+#define DEBOUNCE_MS 30
+
+// The encoder push button is handled below (short = Sel, long = Esc), so the HAL only gets
+// the rotation and the BOOT button.
+static DeviceEncoder encoderCfg() {
+    DeviceEncoder cfg;
+    cfg.pin_a = ENC_A;
+    cfg.pin_b = ENC_B;
+    cfg.pin_sel = -1;
+    cfg.pin_esc = BOOT_BTN;
+    cfg.pullup = true;
+    return cfg;
 }
-
-#define ATS_LONG_PRESS_MS 600
-#define ATS_DEBOUNCE_MS 30
 
 /***************************************************************************************
 ** Function name: _setup_gpio()
-** Location: main.cpp
-** Description:   initial setup for the device
 ***************************************************************************************/
 void _setup_gpio() {
     // powerOff() holds these pads through deep sleep, release them after wake-up
@@ -38,65 +49,54 @@ void _setup_gpio() {
     pinMode(PIN_POWER_ON, OUTPUT);
     digitalWrite(PIN_POWER_ON, HIGH);
 
-    // Bruce does not use the receiver audio path: keep the amplifier off and L/R muted
+    // Receiver audio path stays off until the FM radio app opens it
     pinMode(PIN_AMP_EN, OUTPUT);
     digitalWrite(PIN_AMP_EN, LOW);
     pinMode(AUDIO_MUTE, OUTPUT);
     digitalWrite(AUDIO_MUTE, HIGH);
 
-    pinMode(ENCODER_KEY, INPUT_PULLUP);
-    pinMode(ENCODER_INA, INPUT_PULLUP);
-    pinMode(ENCODER_INB, INPUT_PULLUP);
-    pinMode(ESC_BTN, INPUT_PULLUP);
-    encoder = new RotaryDecoder();
-    encoder->begin(ENCODER_INA, ENCODER_INB, 2);
+    // Spare GPIOs (IO11-IO14) as defaults for external IR / one-pin RF modules
+    bruceConfigPins.irTx = 11;
+    bruceConfigPins.irRx = 12;
+    bruceConfigPins.rfTx = 13;
+    bruceConfigPins.rfRx = 14;
+    bruceConfigPins.rotation = ROTATION;
+
+    pinMode(ENC_KEY, INPUT_PULLUP);
+    // ATS Mini encoder: one full quadrature cycle per detent, resting with A and B high.
+    // The stock firmware decodes it full-step too. TWO03 here made one click move two
+    // menu items and a light touch move one.
+    hal_encoder_init(encoderCfg(), EncoderLatchMode::FOUR3);
 }
 
-/*********************************************************************
-**  Function: setBrightness
-**  set brightness value
-**********************************************************************/
-void _setBrightness(uint8_t brightval) {
-    if (brightval == 0) {
-        analogWrite(TFT_BL, brightval);
-    } else {
-        int bl = MINBRIGHT + round(((255 - MINBRIGHT) * brightval / 100));
-        analogWrite(TFT_BL, bl);
-    }
+/***************************************************************************************
+** Function name: _post_setup_gpio()
+***************************************************************************************/
+void _post_setup_gpio() {
+    hal_bright_attach(TFT_BL);
+    hal_bright_set(TFT_BL, 100);
 }
+
+void _setBrightness(uint8_t brightval) { hal_bright_set(TFT_BL, brightval); }
 
 /*********************************************************************
 ** Function: InputHandler
-** Handles the variables PrevPress, NextPress, SelPress, AnyKeyPress and EscPress
 **********************************************************************/
 void InputHandler(void) {
-    static unsigned long lastEncoderMoveMs = 0;
-    static int posDifference = 0;
-    static int lastPos = 0;
-
     static bool keyDown = false;       // encoder push button currently held
     static bool longFired = false;     // Esc already sent for the current hold
     static bool ignoreRelease = false; // button was used for push-and-turn
     static unsigned long keyDownAt = 0;
 
+    // Rotation (Prev/Next) and BOOT (Esc). The input task clears the globals before each
+    // call, so NextPress/PrevPress here mean "the encoder moved during this pass".
+    hal_encoder_poll(encoderCfg());
+    bool turned = NextPress || PrevPress;
+
     unsigned long now = millis();
-
-    int newPos = encoder->getPosition();
-    if (newPos != lastPos) {
-        posDifference += (newPos - lastPos);
-        // Independent running total for consumers that apply the full backlog at once
-        // (see drainRotarySteps() in globals.h)
-        RotaryNetSteps += (newPos - lastPos);
-        lastPos = newPos;
-        lastEncoderMoveMs = now;
-    } else if (posDifference != 0 && now - lastEncoderMoveMs > 30) {
-        // Drop any stale queued steps once the encoder has stopped moving
-        posDifference = 0;
-    }
-
+    bool pushed = digitalRead(ENC_KEY) == LOW;
     bool selEvent = false;
-    bool escEvent = digitalRead(ESC_BTN) == BTN_ACT;
-    bool pushed = digitalRead(SEL_BTN) == BTN_ACT;
+    bool escEvent = false;
 
     if (pushed && !keyDown) { // pressed
         keyDown = true;
@@ -104,33 +104,22 @@ void InputHandler(void) {
         ignoreRelease = false;
         keyDownAt = now;
     } else if (pushed && keyDown) { // held
-        if (posDifference != 0) ignoreRelease = true;
-        if (!longFired && !ignoreRelease && now - keyDownAt >= ATS_LONG_PRESS_MS) {
+        if (turned) ignoreRelease = true;
+        if (!longFired && !ignoreRelease && now - keyDownAt >= LONG_PRESS_MS) {
             longFired = true;
             escEvent = true;
         }
     } else if (!pushed && keyDown) { // released
         keyDown = false;
-        if (!longFired && !ignoreRelease && now - keyDownAt >= ATS_DEBOUNCE_MS) selEvent = true;
+        if (!longFired && !ignoreRelease && now - keyDownAt >= DEBOUNCE_MS) selEvent = true;
     }
 
-    if (posDifference != 0 || selEvent || escEvent) {
-        if (!wakeUpScreen()) AnyKeyPress = true;
-        else return;
+    if (selEvent || escEvent) {
+        if (wakeUpScreen()) return;
+        AnyKeyPress = true;
+        if (selEvent) SelPress = true;
+        if (escEvent) EscPress = true;
     }
-    if (posDifference > 0) {
-        PrevPress = true;
-        posDifference--;
-    }
-    if (posDifference < 0) {
-        NextPress = true;
-        posDifference++;
-    }
-    if (selEvent) {
-        posDifference = 0;
-        SelPress = true;
-    }
-    if (escEvent) { EscPress = true; }
 }
 
 /*********************************************************************
@@ -140,8 +129,8 @@ void InputHandler(void) {
 **********************************************************************/
 void powerOff() {
     tft.fillScreen(bruceConfig.bgColor);
-    pinMode(TFT_BL, OUTPUT);
-    digitalWrite(TFT_BL, LOW);
+    hal_bright_set(TFT_BL, 0);
+    ledcDetach(TFT_BL);
     tft.writecommand(0x10); // ST7789 SLPIN
     delay(120);
 
@@ -153,9 +142,9 @@ void powerOff() {
     }
     gpio_deep_sleep_hold_en();
 
-    esp_sleep_enable_ext0_wakeup((gpio_num_t)ENCODER_KEY, BTN_ACT);
-    rtc_gpio_pullup_en((gpio_num_t)ENCODER_KEY);
-    rtc_gpio_pulldown_dis((gpio_num_t)ENCODER_KEY);
+    esp_sleep_enable_ext0_wakeup((gpio_num_t)ENC_KEY, LOW);
+    rtc_gpio_pullup_en((gpio_num_t)ENC_KEY);
+    rtc_gpio_pulldown_dis((gpio_num_t)ENC_KEY);
     esp_deep_sleep_start();
 }
 
