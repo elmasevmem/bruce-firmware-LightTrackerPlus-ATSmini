@@ -94,6 +94,11 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download binaries
         uses: actions/download-artifact@v4
         with:
@@ -104,6 +109,13 @@ jobs:
       - name: List files
         run: ls -la release
 
+      - name: Release notes
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python3 .github/scripts/release_notes.py --version "${{ inputs.version }}" --tag-glob 'v*' \
+            --devices all --footer .github/release/footer_all.md --out release_notes.md
+
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
@@ -111,30 +123,5 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "Bruce ${{ inputs.version }} — LightTracker Plus & ATS Mini"
           files: release/*
+          body_path: release_notes.md
           fail_on_unmatched_files: true
-          body: |
-            Bruce firmware builds for two devices.
-
-            ## Files
-            | Device | Full image (flash at `0x0`) | App only (OTA, `0x10000`) |
-            |---|---|---|
-            | QRP Labs LightTracker Plus v1.0 | `Bruce-lighttracker-plus-${{ inputs.version }}-full.bin` | `Bruce-lighttracker-plus-${{ inputs.version }}-app.bin` |
-            | ATS Mini (OPI PSRAM) | `Bruce-ats-mini-${{ inputs.version }}-full.bin` | `Bruce-ats-mini-${{ inputs.version }}-app.bin` |
-
-            ## Flash
-            ```
-            esptool.py --chip esp32s3 --port <PORT> --baud 460800 write_flash 0x0 <full image>
-            ```
-            Or use https://bruce.computer/flasher / ESP Web Tools with the full image at offset 0.
-
-            ## LightTracker Plus
-            - ESP32-S3 + SX1268 (E22-400M30S, 433 MHz) + L80 GPS
-            - Display: 0.96" SSD1306 128x64 I2C OLED on the OLED header (SDA=3, SCL=4, 0x3C)
-            - BOOT button: short press = next, medium (~0.5 s) = select, hold (1.2 s) = back
-            - LoRa works in LoRa Chat via the SX1262 driver (default radio). No CC1101 / Sub-GHz hardware.
-
-            ## ATS Mini
-            - ESP32-S3 + SI4732, 170x320 ST7789, rotary encoder
-            - Only for units with Octal (OPI) PSRAM; Quad PSRAM units need the `ats-mini-qspi` build.
-            - Encoder: rotate = prev/next, short push = select, long push = back
-            - The SI4732 radio is not used by Bruce; reflash the stock ATS Mini firmware to use the radio again.

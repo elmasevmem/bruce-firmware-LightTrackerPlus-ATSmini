@@ -79,28 +79,20 @@ jobs:
           cp Bruce-lighttracker-plus.bin "release/Bruce-lighttracker-plus-${REL_TAG}-full.bin"
           cp .pio/build/lighttracker-plus/firmware.bin "release/Bruce-lighttracker-plus-${REL_TAG}-app.bin"
 
+      - name: Release notes
+        if: env.REL_TAG != ''
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python3 .github/scripts/release_notes.py --version "lighttracker-plus-${REL_TAG}" --tag-glob 'lighttracker-plus-v*' \
+            --devices lighttracker-plus --footer .github/release/footer_lighttracker-plus.md --file-version "${REL_TAG}" --out release_notes.md
+
       - name: Publish GitHub release
         if: env.REL_TAG != ''
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.REL_TAG }}
+          tag_name: lighttracker-plus-${{ env.REL_TAG }}
           target_commitish: ${{ github.sha }}
           name: "LightTracker Plus ${{ env.REL_TAG }}"
           files: release/*
-          body: |
-            Bruce firmware for QRP Labs LightTracker Plus v1.0 (ESP32-S3 + SX1268 E22-400M30S + L80 GPS).
-
-            **Files**
-            - `*-full.bin` — merged image (bootloader + partitions + app). Flash at **0x0**.
-            - `*-app.bin` — application only, for OTA / Bruce updater (flash at 0x10000).
-
-            **Flash**
-            ```
-            esptool.py --chip esp32s3 --port <PORT> --baud 460800 write_flash 0x0 Bruce-lighttracker-plus-${{ env.REL_TAG }}-full.bin
-            ```
-            Or use https://bruce.computer/flasher / ESP Web Tools with the full image at offset 0.
-
-            **Notes**
-            - No display: device runs headless. Connect to the Bruce WiFi AP and use the WebUI, or the USB serial CLI (115200).
-            - LoRa (SX1268) works in the LoRa Chat module via the SX1262 driver; default radio is set to SX1262.
-            - Sub-GHz (CC1101) features are not available on this hardware.
+          body_path: release_notes.md
