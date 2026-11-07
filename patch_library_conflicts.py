@@ -200,6 +200,29 @@ conflicts = [
         r'#define RFAL_NFCA_N_RETRANS         2U',
         '#define RFAL_NFCA_N_RETRANS         4U'
     ),
+    # LovyanGFX 1-bit OLEDs (SSD1306 / SH1106 / SH1107) turn every colour into a 4x4 Bayer
+    # dot pattern. Bruce's UI is drawn in colour (theme, grey frames, icons), so on those
+    # panels text and menus came out as scattered dots. A board can define
+    # LGFX_OLED_NO_DITHER=<0..255> to draw a pixel solid white when its grey level reaches that
+    # value and black otherwise (used by lighttracker-plus). Without the macro nothing changes.
+    (
+        ".pio/libdeps/*/LovyanGFX/src/lgfx/v1/panel/Panel_SSD1306.inl",
+        r'bool flg = 256 <= value \+ btbl\[\(x \+ _bayer_offset\) & 3\];',
+        '\n#if defined(LGFX_OLED_NO_DITHER)\n'
+        '        bool flg = value >= (LGFX_OLED_NO_DITHER);\n'
+        '#else\n'
+        '        bool flg = 256 <= (value + btbl[(x + _bayer_offset) & 3]);\n'
+        '#endif\n'
+    ),
+    (
+        ".pio/libdeps/*/LovyanGFX/src/lgfx/v1/panel/Panel_SSD1306.inl",
+        r'bool flg = 256 <= value \+ bayer_4x4\[ \+ \(\(\(x \+ _bayer_offset\) & 3\) \| \(\(y \+ \(_bayer_offset >> 2\)\) & 3\) << 2\)\];',
+        '\n#if defined(LGFX_OLED_NO_DITHER)\n'
+        '    bool flg = value >= (LGFX_OLED_NO_DITHER);\n'
+        '#else\n'
+        '    bool flg = 256 <= (value + bayer_4x4[(((x + _bayer_offset) & 3) | ((y + (_bayer_offset >> 2)) & 3) << 2)]);\n'
+        '#endif\n'
+    ),
 ]
 
 for file_pattern, search, replace in conflicts:
