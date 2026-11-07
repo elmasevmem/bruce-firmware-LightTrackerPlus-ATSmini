@@ -5,6 +5,7 @@
 // LoRa:    SX1268 (EBYTE E22-400M30S) on the SX1262 driver, RF switch + TCXO from the .ini
 // GPS:     Quectel L80, UART RX 18 / TX 17, power through a PNP switch on GPIO33 (LOW = on)
 
+#include "core/display.h"
 #include "core/powerSave.h"
 #include "hal/device.h"
 #include "hal/inputs/buttons.h"
@@ -38,6 +39,15 @@ bool prepareBoardLoRaRadio() {
 ** Function name: _setup_gpio()
 ***************************************************************************************/
 void _setup_gpio() {
+    // The .ini declares the screen as 64x128 so Bruce lays out a 128x64 landscape UI from the
+    // start (its convention for panels that are portrait natively). The SSD1306 is natively
+    // 128x64, so give LovyanGFX the real geometry before tft.init(); TFT_ROTATION in the .ini
+    // turns Bruce's landscape rotation into the panel's own orientation.
+    displayConfig.width = 128;
+    displayConfig.height = 64;
+    displayConfig.memWidth = 128;
+    displayConfig.memHeight = 64;
+
     // -- Runtime-configurable defaults (Config > Set Device pins) --
 #if !defined(LITE_VERSION)
     bruceConfigPins.LoRa_bus = {
@@ -71,6 +81,21 @@ void _setup_gpio() {
     digitalWrite(USER_LED, LOW);
 
     hal_buttons_init(buttonsCfg(), 1);
+}
+
+/***************************************************************************************
+** Function name: _post_setup_gpio()
+** Bruce only uses landscape rotations (1 and 3) here. Firmware before v0.7 used rotation 0,
+** which a saved config may still hold: move it to the matching landscape rotation.
+***************************************************************************************/
+void _post_setup_gpio() {
+    if ((bruceConfigPins.rotation & 1) == 0) {
+        bruceConfigPins.setRotation(bruceConfigPins.rotation == 2 ? 1 : 3);
+        tft.setRotation(bruceConfigPins.rotation);
+        tftWidth = tft.width();
+        tftHeight = tft.height();
+        tft.fillScreen(bruceConfig.bgColor);
+    }
 }
 
 // OLED: no backlight to dim
